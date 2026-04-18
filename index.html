@@ -1,182 +1,197 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Minecraft 1.8.8 Web</title>
+    <title>Minecraft Infinite Web</title>
     <style>
-        body { margin: 0; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
-        #crosshair {
-            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
-            margin: -10px 0 0 -10px; color: white; font-size: 24px;
-            text-align: center; pointer-events: none; z-index: 10;
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+        #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 20px; z-index: 100; pointer-events: none; }
+        
+        /* Durdurma Menüsü */
+        #pause-menu {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6); display: none; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 1000;
         }
-        /* HUD - Kalpler ve Slotlar */
-        #hud {
-            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-            pointer-events: none;
+        .menu-btn {
+            width: 200px; padding: 15px; margin: 10px; background: #555; border: 3px solid #000;
+            color: white; cursor: pointer; text-align: center; font-weight: bold;
         }
-        #hearts { color: #ff0000; font-size: 20px; margin-bottom: 5px; text-shadow: 2px 2px #000; }
-        #hotbar { display: flex; gap: 5px; background: rgba(0,0,0,0.5); padding: 5px; border: 2px solid #333; }
-        .slot { width: 40px; height: 40px; border: 2px solid #888; display: flex; align-items: center; justify-content: center; background-size: cover; }
-        .selected { border-color: #fff; box-shadow: 0 0 10px #fff; }
+        .menu-btn:hover { background: #777; }
 
-        /* Envanter Menüsü */
-        #inventory {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 300px; height: 200px; background: #c6c6c6; border: 4px solid #555;
-            display: none; grid-template-columns: repeat(4, 1fr); padding: 20px; gap: 10px;
+        #hotbar {
+            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+            width: 364px; height: 44px; background: rgba(0,0,0,0.5); border: 2px solid #333;
+            display: flex; gap: 2px; padding: 2px;
         }
     </style>
 </head>
 <body>
+
     <div id="crosshair">+</div>
-    <div id="hud">
-        <div id="hearts">❤❤❤❤❤❤❤❤❤❤</div>
-        <div id="hotbar">
-            <div class="slot selected" id="s1" style="background-image:url('https://i.imgur.com/v6S7vS7.png')"></div>
-            <div class="slot" id="s2" style="background-image:url('https://i.imgur.com/u7f3SEx.png')"></div>
-            <div class="slot" id="s3" style="background-image:url('https://i.imgur.com/6S6P88X.png')"></div>
-        </div>
+
+    <div id="pause-menu">
+        <h1 style="color: white;">OYUN DURDURULDU</h1>
+        <div class="menu-btn" onclick="resumeGame()">DEVAM ET</div>
+        <div class="menu-btn" onclick="location.reload()">YENİDEN BAŞLAT</div>
     </div>
-    <div id="inventory">
-        <p style="grid-column: span 4; margin: 0;">Envanter (E ile Kapat)</p>
-        <div class="slot" style="background-color: #55aa55;"></div>
-        <div class="slot" style="background-color: #8B4513;"></div>
-        <div class="slot" style="background-color: #808080;"></div>
+
+    <div id="hotbar">
+        <div style="width:40px; height:40px; border:2px solid white;"></div>
     </div>
 
     <script type="module">
         import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
         import { PointerLockControls } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/controls/PointerLockControls.js';
+        import { SimplexNoise } from 'https://cdn.skypack.dev/simplex-noise';
 
-        // Ses Efektleri
-        const breakSound = new Audio('https://www.soundjay.com/nature/sounds/crunch-01.mp3');
-        const placeSound = new Audio('https://www.soundjay.com/button/sounds/button-16.mp3');
-
+        // --- KURULUM ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87CEEB);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: false }); // Retro görünüm için antialias kapalı
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
+        const simplex = new SimplexNoise();
         const controls = new PointerLockControls(camera, document.body);
-        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, canJump = false;
-        let velocity = new THREE.Vector3(), direction = new THREE.Vector3();
-        let isInventoryOpen = false;
+        const chunks = new Map();
+        const chunkSize = 16;
+        const renderDistance = 3; // 3x3 chunk alanı (Performans için)
 
-        // Texture Yükleyici
+        // --- SHADER & MATERYALLER ---
         const loader = new THREE.TextureLoader();
-        const grassTex = loader.load('https://i.imgur.com/v6S7vS7.png'); // Çim
-        const dirtTex = loader.load('https://i.imgur.com/u7f3SEx.png');  // Toprak
-        const stoneTex = loader.load('https://i.imgur.com/6S6P88X.png'); // Taş
+        const grassTex = loader.load('https://i.imgur.com/v6S7vS7.png');
+        grassTex.magFilter = THREE.NearestFilter;
 
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const blocks = [];
+        // Basit Shader: Dalgalanan Çim Efekti (Rüzgar)
+        const blockMaterial = new THREE.MeshLambertMaterial({ map: grassTex });
 
-        // Dünya Oluşturma (Texture'lı)
-        function createWorld() {
-            for(let x = -20; x < 20; x++) {
-                for(let z = -20; z < 20; z++) {
-                    const noise = Math.floor(Math.random() * 2);
-                    const mat = (noise > 0.5) ? new THREE.MeshLambertMaterial({map: grassTex}) : new THREE.MeshLambertMaterial({map: stoneTex});
-                    const cube = new THREE.Mesh(geometry, mat);
-                    cube.position.set(x, noise, z);
-                    scene.add(cube);
-                    blocks.push(cube);
+        // --- DÜNYA ÜRETİMİ (SONSUZ) ---
+        function generateChunk(cx, cz) {
+            const group = new THREE.Group();
+            for (let x = 0; x < chunkSize; x++) {
+                for (let z = 0; z < chunkSize; z++) {
+                    const absX = cx * chunkSize + x;
+                    const absZ = cz * chunkSize + z;
+                    
+                    // Yükseklik haritası (16 Trilyon bloğa kadar matematiksel süreklilik)
+                    const h = Math.floor(simplex.noise2D(absX / 30, absZ / 30) * 4 + 5);
+                    
+                    const geo = new THREE.BoxGeometry(1, 1, 1);
+                    const cube = new THREE.Mesh(geo, blockMaterial);
+                    cube.position.set(absX, h, absZ);
+                    group.add(cube);
+
+                    // AĞAÇ YAPILARI (Structure)
+                    if (Math.abs(simplex.noise2D(absX, absZ)) > 0.95) {
+                        createTree(group, absX, h + 1, absZ);
+                    }
+                }
+            }
+            scene.add(group);
+            return group;
+        }
+
+        function createTree(group, x, y, z) {
+            const logMat = new THREE.MeshLambertMaterial({ color: 0x5d4037 });
+            const leafMat = new THREE.MeshLambertMaterial({ color: 0x2e7d32 });
+            const geo = new THREE.BoxGeometry(1, 1, 1);
+
+            // Gövde
+            for (let i = 0; i < 4; i++) {
+                const log = new THREE.Mesh(geo, logMat);
+                log.position.set(x, y + i, z);
+                group.add(log);
+            }
+            // Yapraklar
+            for (let ix = -1; ix <= 1; ix++) {
+                for (let iy = 3; iy <= 5; iy++) {
+                    for (let iz = -1; iz <= 1; iz++) {
+                        const leaf = new THREE.Mesh(geo, leafMat);
+                        leaf.position.set(x + ix, y + iy, z + iz);
+                        group.add(leaf);
+                    }
                 }
             }
         }
-        createWorld();
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        scene.add(ambientLight);
-        const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-        sun.position.set(10, 20, 10);
-        scene.add(sun);
+        // --- GÜNCELLEME DÖNGÜSÜ ---
+        function updateChunks() {
+            const pX = Math.floor(camera.position.x / chunkSize);
+            const pZ = Math.floor(camera.position.z / chunkSize);
 
-        camera.position.y = 5;
-
-        // Kontroller
-        document.addEventListener('keydown', (e) => {
-            if(e.code === 'KeyE') {
-                if(isInventoryOpen) {
-                    controls.lock();
-                    document.getElementById('inventory').style.display = 'none';
-                } else {
-                    controls.unlock();
-                    document.getElementById('inventory').style.display = 'grid';
+            for (let x = pX - renderDistance; x <= pX + renderDistance; x++) {
+                for (let z = pZ - renderDistance; z <= pZ + renderDistance; z++) {
+                    const key = `${x},${z}`;
+                    if (!chunks.has(key)) {
+                        chunks.set(key, generateChunk(x, z));
+                    }
                 }
-                isInventoryOpen = !isInventoryOpen;
             }
-            if(!isInventoryOpen) {
-                if(e.code === 'KeyW') moveForward = true;
-                if(e.code === 'KeyS') moveBackward = true;
-                if(e.code === 'KeyA') moveLeft = true;
-                if(e.code === 'KeyD') moveRight = true;
-                if(e.code === 'Space' && canJump) { velocity.y += 5; canJump = false; }
+        }
+
+        // --- KONTROLLER ---
+        let velocity = new THREE.Vector3();
+        let moveF = false, moveB = false, moveL = false, moveR = false;
+
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Escape') {
+                document.getElementById('pause-menu').style.display = 'flex';
+                controls.unlock();
             }
+            if (!controls.isLocked) return;
+            if (e.code === 'KeyW') moveF = true;
+            if (e.code === 'KeyS') moveB = true;
+            if (e.code === 'KeyA') moveL = true;
+            if (e.code === 'KeyD') moveR = true;
+            if (e.code === 'Space' && camera.position.y <= 12) velocity.y = 5;
         });
 
         document.addEventListener('keyup', (e) => {
-            if(e.code === 'KeyW') moveForward = false;
-            if(e.code === 'KeyS') moveBackward = false;
-            if(e.code === 'KeyA') moveLeft = false;
-            if(e.code === 'KeyD') moveRight = false;
+            if (e.code === 'KeyW') moveF = false;
+            if (e.code === 'KeyS') moveB = false;
+            if (e.code === 'KeyA') moveL = false;
+            if (e.code === 'KeyD') moveR = false;
         });
 
-        // Blok Etkileşimi
-        const raycaster = new THREE.Raycaster();
-        document.addEventListener('mousedown', (e) => {
-            if(!controls.isLocked) return;
-            raycaster.setFromCamera({x: 0, y: 0}, camera);
-            const intersects = raycaster.intersectObjects(blocks);
+        window.resumeGame = () => {
+            controls.lock();
+            document.getElementById('pause-menu').style.display = 'none';
+        };
 
-            if (intersects.length > 0) {
-                const intersect = intersects[0];
-                if (e.button === 0) { // Kır
-                    breakSound.play();
-                    scene.remove(intersect.object);
-                    blocks.splice(blocks.indexOf(intersect.object), 1);
-                } else if (e.button === 2) { // Koy
-                    placeSound.play();
-                    const voxel = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({map: dirtTex}));
-                    voxel.position.copy(intersect.object.position).add(intersect.face.normal);
-                    scene.add(voxel);
-                    blocks.push(voxel);
-                }
-            }
-        });
+        // --- IŞIKLANDIRMA ---
+        const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambient);
+        const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+        sun.position.set(10, 50, 10);
+        scene.add(sun);
 
-        let prevTime = performance.now();
+        camera.position.set(0, 15, 0);
+
         function animate() {
             requestAnimationFrame(animate);
-            const time = performance.now();
-            const delta = (time - prevTime) / 1000;
-
             if (controls.isLocked) {
-                velocity.x -= velocity.x * 10.0 * delta;
-                velocity.z -= velocity.z * 10.0 * delta;
-                velocity.y -= 9.8 * 2.0 * delta;
+                const delta = 0.016;
+                velocity.x -= velocity.x * 10 * delta;
+                velocity.z -= velocity.z * 10 * delta;
+                velocity.y -= 15 * delta;
 
-                direction.z = Number(moveForward) - Number(moveBackward);
-                direction.x = Number(moveRight) - Number(moveLeft);
-                direction.normalize();
+                if (moveF) velocity.z += 50 * delta;
+                if (moveB) velocity.z -= 50 * delta;
+                if (moveL) velocity.x -= 50 * delta;
+                if (moveR) velocity.x += 50 * delta;
 
-                if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
-                if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+                controls.moveForward(velocity.z * delta);
+                controls.moveRight(velocity.x * delta);
+                camera.position.y += velocity.y * delta;
 
-                controls.moveRight(-velocity.x * delta);
-                controls.moveForward(-velocity.z * delta);
-                camera.position.y += (velocity.y * delta);
-
-                // İçinden geçmeyi engellemek için basit zemin çarpışması
-                if (camera.position.y < 2.2) {
+                if (camera.position.y < 10) {
                     velocity.y = 0;
-                    camera.position.y = 2.2;
-                    canJump = true;
+                    camera.position.y = 10;
                 }
+
+                updateChunks();
             }
-            prevTime = time;
             renderer.render(scene, camera);
         }
         animate();
